@@ -1,6 +1,29 @@
 --- Returns a list of available Neovim versions
 --- Fetches from GitHub releases API
 
+--- Build HTTP headers for a GitHub API request.
+--- If a GitHub token is present in the environment, it is sent as a
+--- Bearer token so the caller gets the 5000/h authenticated rate limit
+--- instead of the 60/h anonymous limit. This avoids spurious HTTP 403
+--- failures behind shared/NATed egress IPs. No-op when no token is set,
+--- so behavior is unchanged for users who do not configure one.
+local function github_headers()
+    local headers = {
+        ["Accept"] = "application/vnd.github.v3+json",
+    }
+    if not (os and os.getenv) then
+        return headers
+    end
+    for _, name in ipairs({ "GITHUB_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN" }) do
+        local token = os.getenv(name)
+        if token ~= nil and token ~= "" then
+            headers["Authorization"] = "Bearer " .. token
+            break
+        end
+    end
+    return headers
+end
+
 -- Helper function to get checksum for a release
 local function get_release_checksum(release, http)
     -- Determine platform-specific asset name
@@ -47,7 +70,10 @@ local function get_release_checksum(release, http)
         return nil
     end
 
-    local checksum_resp, checksum_err = http.get({ url = checksum_url })
+    local checksum_resp, checksum_err = http.get({
+        url = checksum_url,
+        headers = github_headers(),
+    })
     if checksum_err ~= nil or checksum_resp.status_code ~= 200 then
         return nil
     end
@@ -62,9 +88,7 @@ function PLUGIN:Available(ctx)
 
     local resp, err = http.get({
         url = "https://api.github.com/repos/neovim/neovim/releases",
-        headers = {
-            ["Accept"] = "application/vnd.github.v3+json",
-        },
+        headers = github_headers(),
     })
 
     if err ~= nil then

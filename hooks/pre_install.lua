@@ -1,6 +1,29 @@
 --- Returns information about the version to install
 --- Constructs the download URL based on OS and architecture
 
+--- Build HTTP headers for a GitHub API request.
+--- If a GitHub token is present in the environment, it is sent as a
+--- Bearer token so the caller gets the 5000/h authenticated rate limit
+--- instead of the 60/h anonymous limit. This avoids spurious HTTP 403
+--- failures behind shared/NATed egress IPs. No-op when no token is set,
+--- so behavior is unchanged for users who do not configure one.
+local function github_headers()
+    local headers = {
+        ["Accept"] = "application/vnd.github.v3+json",
+    }
+    if not (os and os.getenv) then
+        return headers
+    end
+    for _, name in ipairs({ "GITHUB_API_TOKEN", "GH_TOKEN", "GITHUB_TOKEN" }) do
+        local token = os.getenv(name)
+        if token ~= nil and token ~= "" then
+            headers["Authorization"] = "Bearer " .. token
+            break
+        end
+    end
+    return headers
+end
+
 function PLUGIN:PreInstall(ctx)
     local http = require("http")
     local json = require("json")
@@ -46,9 +69,7 @@ function PLUGIN:PreInstall(ctx)
     -- Fetch the specific release
     local resp, err = http.get({
         url = "https://api.github.com/repos/neovim/neovim/releases/tags/" .. tag,
-        headers = {
-            ["Accept"] = "application/vnd.github.v3+json",
-        },
+        headers = github_headers(),
     })
 
     if err ~= nil then
@@ -83,6 +104,7 @@ function PLUGIN:PreInstall(ctx)
     if checksum_url ~= nil then
         local checksum_resp, checksum_err = http.get({
             url = checksum_url,
+            headers = github_headers(),
         })
         if checksum_err == nil and checksum_resp.status_code == 200 then
             -- Format is: "checksum  filename\n"
